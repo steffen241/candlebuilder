@@ -1,11 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Jul 19 10:21:36 2024
-
-@author: steff
-"""
 import numpy as np
-
+from event_queue import *
 class Candle:
     def __init__(self):
         self.o = 0
@@ -117,10 +111,11 @@ class Candle:
             self.vel_delta_o = self.vel_delta
             
 class Candleseries:
-    def __init__(self,ctype,interval):
+    def __init__(self,name,ctype,interval):
         self.storage_size = 10000
         self.st_idx = 0
         self.clist = []
+        self.name = name
         self.ctype = ctype
         self.interval = interval
         self.clist.append(Candle())
@@ -191,32 +186,40 @@ class Candleseries:
             c.tick_dir = 'up'
         elif c.c > o[2]:
             c.tick_dir = 'down'
-        if c.state == 'open':
-            c.start_candle(o,self.interval)
+        # check if current bar is ready to close: new tick exceeds the threshold and
+        # opens a new bar
+        if c.state == 'running' or c.state == 'open':
+            if c.state == 'open':
+                c.start_candle(o,self.interval)
+            elif self.ctype == 'tick' and c.num_trades > self.interval:
+                c.state = 'closed'
+            elif self.ctype == 'volume' and c.vol > self.interval:
+                c.state = 'closed'
+            elif self.ctype == 'time' and c.time_mod < o[0]/1e3/self.interval//60:
+                c.state = 'closed'
+                # print (self.ctype,c.time_mod,o[0]/1e3/self.interval//60,c.state)
+            else:
+                # add the tick to current candle, state == running
+                if o[2] > c.h:
+                    c.h = o[2]
+                if o[2] < c.l:
+                    c.l = o[2] 
+                c.c = o[2]
+                c.num_trades = c.num_trades+o[3]
+                c.vol = c.vol+o[4]
+            self.clist[-1].update_delta(o)
+            self.update_cumdelta()
+            self.clist[-1].update_velocity(of)
+
+        # we start a new candle in case the new tick closed the previous candle
         if c.state == 'closed':
+            self.update_storage()
+            # print(self.name,datetime.datetime.fromtimestamp(self.clist[-1].time/1e3),self.clist[-1].state)
+            d.append(('ON_BAR',self.name))
             c_new = Candle()
             c_new.start_candle(o,self.interval)
             self.st_idx = self.st_idx+1
             self.clist.append(c_new)
-            c = self.clist[-1]
-        elif c.state == 'running':
-            if o[2] > c.h:
-                c.h = o[2]
-            if o[2] < c.l:
-                c.l = o[2] 
-            c.c = o[2]
-            c.num_trades = c.num_trades+o[3]
-            c.vol = c.vol+o[4]
-            if self.ctype == 'tick' and c.num_trades > self.interval:
-                c.state = 'closed'
-            if self.ctype == 'volume' and c.vol > self.interval:
-                c.state = 'closed'
-            if self.ctype == 'time' and c.time_mod < o[0]/1e3/self.interval//60:
-                c.state = 'closed'
-                # print (self.ctype,c.time_mod,o[0]/1e3/self.interval//60,c.state)
-        self.clist[-1].update_delta(o)
-        self.update_cumdelta()
-        self.clist[-1].update_velocity(of)
-        if c.state == 'closed':
-            self.update_storage()
+            c = self.clist[-1]               
+            # print(self.name,datetime.datetime.fromtimestamp(self.clist[-1].time/1e3),self.clist[-1].state)
         return c.state
